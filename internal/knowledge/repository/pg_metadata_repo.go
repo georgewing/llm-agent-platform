@@ -2,16 +2,24 @@ package repository
 
 import (
 	"context"
-	"gorm.io/gorm"
 	"llm-agent-platform/internal/knowledge/domain"
+
+	"gorm.io/gorm"
 )
 
-// MetadataRepo 定义关系型数据接口
+type VectorRepo interface {
+	SearchVector(ctx context.Context, vector []float32, topK int) ([]*domain.Chunk, error)
+}
+
+type KeywordRepo interface {
+	SearchKeyword(ctx context.Context, query string, topK int) ([]*domain.Chunk, error)
+}
+
 type MetadataRepo interface {
 	CreateDocument(ctx context.Context, doc *domain.Document) error
 	UpdateDocumentStatus(ctx context.Context, docID string, status string) error
 	BatchSaveChunks(ctx context.Context, chunks []*domain.Chunk) error
-	GetChunkByID(ctx context.Context, chunkID string) (*domain.Chunk, error)
+	GetChunksByIDs(ctx context.Context, ids []string) (map[string]*domain.Chunk, error)
 }
 
 type PGMetadataRepo struct {

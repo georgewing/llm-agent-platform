@@ -12,8 +12,9 @@ type Document struct {
 }
 
 type Chunk struct {
-	ID         string `json:"id"`
-	DocumentID string `json:"document_id"`
-	Content    string `json:"content"`
-	Metadata   string `json:"metadata"`
+	ID         string  `json:"id"`
+	DocumentID string  `json:"document_id"`
+	Content    string  `json:"content"`
+	Metadata   string  `json:"metadata"`
+	Score      float64 `json:"score"`
 }
