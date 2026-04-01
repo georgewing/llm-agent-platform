@@ -2,9 +2,9 @@ package repository
 
 import (
 	"context"
-	"enterprise-agent/internal/knowledge/domain"
 	"fmt"
 	"github.com/milvus-io/milvus-sdk-go/v2/client"
+	"llm-agent-platform/internal/knowledge/domain"
 )
 
 type MilvusRepo struct {

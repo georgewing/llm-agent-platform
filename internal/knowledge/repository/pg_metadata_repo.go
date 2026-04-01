@@ -26,3 +26,21 @@ func NewPGMetadataRepo(db *gorm.DB) *PGMetadataRepo {
 func (r *PGMetadataRepo) BatchSaveChunks(ctx context.Context, chunks []*domain.Chunk) error {
 	return r.db.WithContext(ctx).Create(&chunks).Error
 }
+
+// GetChunksByIDs 批量回表查询
+func (r *PGMetadataRepo) GetChunksByIDs(ctx context.Context, ids []string) (map[string]*domain.Chunk, error) {
+	var chunks []*domain.Chunk
+
+	// GORM 批量查询： SELECT * FROM chunks WHERE id IN (?)
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&chunks).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// 转为 Map 以便 O(1) 复杂度回填
+	chunkMap := make(map[string]*domain.Chunk)
+	for _, c := range chunks {
+		chunkMap[c.ID] = c
+	}
+	return chunkMap, nil
+}

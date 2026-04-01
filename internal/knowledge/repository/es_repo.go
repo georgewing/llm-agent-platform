@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"enterprise-agent/internal/knowledge/domain"
 	"github.com/elastic/go-elasticsearch/v8"
+	"llm-agent-platform/internal/knowledge/domain"
 )
 
 type ESRepo struct {

@@ -2,7 +2,6 @@ package retrieval
 
 import (
 	"context"
-	"math"
 	"sort"
 	"sync"
 
@@ -12,25 +11,33 @@ import (
 
 // HybridRetriever 混合检索器
 type HybridRetriever struct {
-	vectorRepo  repository.VectorRepo
-	keywordRepo repository.KeywordRepo
-	reranker    Reranker // 可选的重排器组件
-	alpha       float64  // 向量权重
-	beta        float64  // 关键词权重
+	vectorRepo  repository.VectorRepo   // Milvus: 返回 ID + 距离
+	keywordRepo repository.KeywordRepo  // ES: 返回 ID + BM25分数 (+可能包含Content)
+	metaRepo    repository.MetadataRepo // PG: 根据 ID 补全 Content 和 Metadata
+	reranker    Reranker                // 重排器
+	alpha       float64
+	beta        float64
 }
 
-// NewHybridRetriever 初始化混合检索器
-func NewHybridRetriever(vr repository.VectorRepo, kr repository.KeywordRepo, reranker Reranker, alpha, beta float64) *HybridRetriever {
+// NewHybridRetriever 初始化混合检索器 (新增了 MetadataRepo 依赖)
+func NewHybridRetriever(
+	vr repository.VectorRepo,
+	kr repository.KeywordRepo,
+	mr repository.MetadataRepo, // 注入 PG Repo
+	reranker Reranker,
+	alpha, beta float64,
+) *HybridRetriever {
 	return &HybridRetriever{
 		vectorRepo:  vr,
 		keywordRepo: kr,
+		metaRepo:    mr,
 		reranker:    reranker,
 		alpha:       alpha,
 		beta:        beta,
 	}
 }
 
-// Retrieve 执行完整的检索与重排Pipeline
+// Retrieve 完整的工业级 RAG 检索 Pipeline
 func (h *HybridRetriever) Retrieve(ctx context.Context, query string, queryVector []float32, topK int) ([]*domain.Chunk, error) {
 	var (
 		wg        sync.WaitGroup
@@ -40,49 +47,86 @@ func (h *HybridRetriever) Retrieve(ctx context.Context, query string, queryVecto
 		kwErr     error
 	)
 
+	// ==========================================
+	// 阶段 1：并发双路召回 (获取 Chunk ID 和 原始 Score)
+	// ==========================================
 	wg.Add(2)
-
-	// 1. 并发调用 Milvus 进行 AnnSearch 向量召回
 	go func() {
 		defer wg.Done()
+		// Milvus 召回：此时 Chunk 里面只有 ID 和 Score，没有 Content
 		vecChunks, vecErr = h.vectorRepo.SearchVector(ctx, queryVector, topK)
 	}()
-
-	// 2. 并发调用 ES 进行 BM25 + Fuzzy 关键词召回
 	go func() {
 		defer wg.Done()
+		// ES 召回：包含 ID 和 Score
 		kwChunks, kwErr = h.keywordRepo.SearchKeyword(ctx, query, topK)
 	}()
-
 	wg.Wait()
 
-	// 容错处理：如果两路都失败才返回错误，否则部分降级
 	if vecErr != nil && kwErr != nil {
-		return nil, vecErr
+		return nil, vecErr // 两路全挂才报错
 	}
 
-	// 3. 分数归一化 (Min-Max Normalization)
+	// ==========================================
+	// 阶段 2：分数归一化与线性加权融合 (只计算分数)
+	// ==========================================
 	h.normalizeScores(vecChunks)
 	h.normalizeScores(kwChunks)
 
-	// 4. 线性加权融合 (Linear Weighting Fusion)
-	fusedChunks := h.linearWeightFusion(vecChunks, kwChunks, topK*2) // 召回阶段多保留一些给重排
+	// 融合后的结果，按照综合得分降序，保留 Top N (通常 N = topK * 2 给重排留出空间)
+	fusedChunks := h.linearWeightFusion(vecChunks, kwChunks, topK*2)
 
-	// 5. 可选：重排序阶段 (CrossEncoder / LLM Rerank)
-	if h.reranker != nil && len(fusedChunks) > 0 {
-		rerankedChunks, err := h.reranker.Rerank(ctx, query, fusedChunks, topK)
+	if len(fusedChunks) == 0 {
+		return []*domain.Chunk{}, nil
+	}
+
+	// ==========================================
+	// 阶段 3：回表 (Hydration) - 从 PG 查询完整文本
+	// ==========================================
+	// 提取出所有融合后的 Chunk ID
+	var chunkIDs []string
+	for _, c := range fusedChunks {
+		chunkIDs = append(chunkIDs, c.ID)
+	}
+
+	// 批量查询 PG 获取真实的 Content 和 Metadata
+	// 注意：在 MetadataRepo 中需要实现 GetChunksByIDs(ctx,[]string) 方法
+	pgChunksMap, err := h.metaRepo.GetChunksByIDs(ctx, chunkIDs)
+	if err != nil {
+		return nil, err // 如果 PG 挂了，无法获取文本，只能报错
+	}
+
+	// 将 PG 的完整数据组装（回填）到 FusedChunks 中
+	var hydratedChunks []*domain.Chunk
+	for _, c := range fusedChunks {
+		if pgData, exists := pgChunksMap[c.ID]; exists {
+			c.Content = pgData.Content
+			c.Metadata = pgData.Metadata
+			// 保留 c.Score (这个是融合后的检索分数)
+			hydratedChunks = append(hydratedChunks, c)
+		}
+	}
+
+	// ==========================================
+	// 阶段 4：重排 (Rerank)
+	// ==========================================
+	// Reranker 必须拿到 hydratedChunks，因为它需要读取 c.Content
+	if h.reranker != nil && len(hydratedChunks) > 0 {
+		rerankedChunks, err := h.reranker.Rerank(ctx, query, hydratedChunks, topK)
 		if err == nil {
 			return rerankedChunks, nil
 		}
-		// 如果 Rerank 失败（例如调大模型超时），优雅降级，直接使用召回结果
+		// 如果大模型重排超时或失败，降级，继续往下走直接返回融合结果
 	}
 
-	// 截取 Top K
-	if len(fusedChunks) > topK {
-		fusedChunks = fusedChunks[:topK]
+	// ==========================================
+	// 阶段 5：截断返回最终结果
+	// ==========================================
+	if len(hydratedChunks) > topK {
+		hydratedChunks = hydratedChunks[:topK]
 	}
 
-	return fusedChunks, nil
+	return hydratedChunks, nil
 }
 
 // normalizeScores Min-Max 归一化，将得分映射到 0~1 区间
