@@ -3,12 +3,12 @@ package ingestion
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
-	"go.uber.org/zap"
 	"llm-agent-platform/internal/knowledge/domain"
 	"llm-agent-platform/internal/knowledge/repository"
+
+	"go.uber.org/zap"
 )
 
 type IngestionUsecase struct {
