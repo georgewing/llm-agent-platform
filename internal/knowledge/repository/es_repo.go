@@ -31,12 +31,58 @@ func (r *ESRepo) SearchKeyword(ctx context.Context, query string, topK int) ([]*
 			},
 		},
 		"size": topK,
+		// 可选：加 min_score 过滤低质量结果
+		// "min_score": 0.5,
 	}
 
 	// 2. 发送请求到 ES
+	res, err := r.client.Search(
+		r.client.Search.WithContext(ctx),
+		r.client.Search.WithIndex(r.indexName),
+		r.client.Search.WithBody(bytes.NewReader(bodyBytes)),
+		r.client.Search.WithTrackTotalHits(false),
+		r.client.Search.WithPretty(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("es search request failed: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return nil, fmt.Errorf("es search error: %s", res.String())
+	}
+
 	// 3. 解析 Response 中的 Hits
+	type hit struct {
+		ID     string  `json:"_id"`
+		Score  float64 `json:"_score"`
+		Source struct {
+			Content string `json:"content"`
+		} `json:"_source"`
+	}
+
+	type esResponse struct {
+		Hits struct {
+			Hits []hit `json:"hits"`
+		} `json:"hits"`
+	}
+
+	var resp esResponse
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("decode es response failed: %w", err)
+	}
+
 	// 4. 将 ES 的 _id 和 _score 映射到 domain.Chunk
-	return []*domain.Chunk{}, nil
+	chunks := make([]*domain.Chunk, 0, len(resp.Hits.Hits))
+	for _, h := range resp.Hits.Hits {
+		chunks = append(chunks, &domain.Chunk{
+			ID:      h.ID,
+			Score:   h.Score,          // BM25 分数（越高越好）
+			Content: h.Source.Content, // 直接带回内容，避免额外 PG 查询
+		})
+	}
+
+	return chunks, nil
 }
 
 func (r *ESRepo) IndexKeywords(ctx context.Context, chunks []*domain.Chunk) error {
