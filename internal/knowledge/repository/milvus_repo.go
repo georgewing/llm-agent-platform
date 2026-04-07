@@ -66,6 +66,7 @@ func (r *MilvusRepo) SearchVector(ctx context.Context, vector []float32, topK in
 			})
 		}
 	}
+
 	return chunks, nil
 }
 
