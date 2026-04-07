@@ -2,9 +2,11 @@ package retrieval
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 
+	"go.uber.org/zap"
 	"llm-agent-platform/internal/knowledge/domain"
 	"llm-agent-platform/internal/knowledge/repository"
 )
@@ -17,6 +19,7 @@ type HybridRetriever struct {
 	reranker    Reranker                // 重排器
 	alpha       float64
 	beta        float64
+	logger      *zap.Logger
 }
 
 // NewHybridRetriever 初始化混合检索器 (新增了 MetadataRepo 依赖)
@@ -26,6 +29,7 @@ func NewHybridRetriever(
 	mr repository.MetadataRepo, // 注入 PG Repo
 	reranker Reranker,
 	alpha, beta float64,
+	logger *zap.Logger,
 ) *HybridRetriever {
 	return &HybridRetriever{
 		vectorRepo:  vr,
@@ -34,11 +38,17 @@ func NewHybridRetriever(
 		reranker:    reranker,
 		alpha:       alpha,
 		beta:        beta,
+		logger:      logger,
 	}
 }
 
 // Retrieve 完整的工业级 RAG 检索 Pipeline
 func (h *HybridRetriever) Retrieve(ctx context.Context, query string, queryVector []float32, topK int) ([]*domain.Chunk, error) {
+	// 上下文取消检查
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("上下文取消: %w", ctx.Err())
+	}
+
 	var (
 		wg        sync.WaitGroup
 		vecChunks []*domain.Chunk
@@ -47,9 +57,7 @@ func (h *HybridRetriever) Retrieve(ctx context.Context, query string, queryVecto
 		kwErr     error
 	)
 
-	// ==========================================
 	// 阶段 1：并发双路召回 (获取 Chunk ID 和 原始 Score)
-	// ==========================================
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -64,12 +72,10 @@ func (h *HybridRetriever) Retrieve(ctx context.Context, query string, queryVecto
 	wg.Wait()
 
 	if vecErr != nil && kwErr != nil {
-		return nil, vecErr // 两路全挂才报错
+		return nil, fmt.Errorf("both vector and keyword search failed: %w", vecErr) // 两路全挂才报错
 	}
 
-	// ==========================================
 	// 阶段 2：分数归一化与线性加权融合 (只计算分数)
-	// ==========================================
 	h.normalizeScores(vecChunks)
 	h.normalizeScores(kwChunks)
 
@@ -80,9 +86,7 @@ func (h *HybridRetriever) Retrieve(ctx context.Context, query string, queryVecto
 		return []*domain.Chunk{}, nil
 	}
 
-	// ==========================================
 	// 阶段 3：回表 (Hydration) - 从 PG 查询完整文本
-	// ==========================================
 	// 提取出所有融合后的 Chunk ID
 	var chunkIDs []string
 	for _, c := range fusedChunks {
@@ -93,7 +97,7 @@ func (h *HybridRetriever) Retrieve(ctx context.Context, query string, queryVecto
 	// 注意：在 MetadataRepo 中需要实现 GetChunksByIDs(ctx,[]string) 方法
 	pgChunksMap, err := h.metaRepo.GetChunksByIDs(ctx, chunkIDs)
 	if err != nil {
-		return nil, err // 如果 PG 挂了，无法获取文本，只能报错
+		return nil, fmt.Errorf("metadata hydration failed: %w", err) // 如果 PG 挂了，无法获取文本，只能报错
 	}
 
 	// 将 PG 的完整数据组装（回填）到 FusedChunks 中
@@ -107,25 +111,23 @@ func (h *HybridRetriever) Retrieve(ctx context.Context, query string, queryVecto
 		}
 	}
 
-	// ==========================================
-	// 阶段 4：重排 (Rerank)
-	// ==========================================
+	// 阶段 4：重排 (降级友好)
 	// Reranker 必须拿到 hydratedChunks，因为它需要读取 c.Content
 	if h.reranker != nil && len(hydratedChunks) > 0 {
-		rerankedChunks, err := h.reranker.Rerank(ctx, query, hydratedChunks, topK)
+		reranked, err := h.reranker.Rerank(ctx, query, hydratedChunks, topK)
 		if err == nil {
-			return rerankedChunks, nil
+			h.logger.Info("hybrid retrieve reranked", zap.Int("original", len(hydratedChunks)), zap.Int("final", len(reranked)))
+			return reranked, nil
 		}
 		// 如果大模型重排超时或失败，降级，继续往下走直接返回融合结果
+		h.logger.Warn("reranking failed", zap.Error(err))
 	}
 
-	// ==========================================
 	// 阶段 5：截断返回最终结果
-	// ==========================================
 	if len(hydratedChunks) > topK {
 		hydratedChunks = hydratedChunks[:topK]
 	}
-
+	h.logger.Info("hybrid retrieve completed", zap.String("query", query), zap.Int("final", len(hydratedChunks)))
 	return hydratedChunks, nil
 }
 

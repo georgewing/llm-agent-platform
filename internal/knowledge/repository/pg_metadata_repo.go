@@ -5,6 +5,7 @@ import (
 	"llm-agent-platform/internal/knowledge/domain"
 	"llm-agent-platform/internal/model"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -98,7 +99,7 @@ func (r *PGMetadataRepo) domainToModelChunk(chunk *domain.Chunk) *model.Chunk {
 		DocumentID: chunk.DocumentID,
 		TenantID:   "default", // TODO: 从上下文获取租户 ID
 		Embedding:  nil,       // 不存 PG，只存 Milvus
-		Metadata:   chunk.Metadata,
+		Metadata:   datatypes.JSON(chunk.Metadata),
 	}
 }
 
