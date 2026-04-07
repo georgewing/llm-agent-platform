@@ -9,12 +9,18 @@ import (
 	"gorm.io/gorm"
 )
 
+type EmbeddingService interface {
+	EmbedBatch(ctx context.Context, text []string) ([][]float32, error)
+}
+
 type VectorRepo interface {
 	SearchVector(ctx context.Context, vector []float32, topK int) ([]*domain.Chunk, error)
+	InsertVectors(ctx context.Context, chunks []domain.Chunk, vector []float32) error
 }
 
 type KeywordRepo interface {
 	SearchKeyword(ctx context.Context, query string, topK int) ([]*domain.Chunk, error)
+	IndexKeywords(ctx context.Context, chunks []*domain.Chunk) error
 }
 
 type MetadataRepo interface {
@@ -49,24 +55,34 @@ func (r *PGMetadataRepo) UpdateDocumentStatus(ctx context.Context, docID string,
 
 // BatchSaveChunks 批量落库 Chunk 的纯文本和元数据 (不存向量)
 func (r *PGMetadataRepo) BatchSaveChunks(ctx context.Context, chunks []*domain.Chunk) error {
-	return r.db.WithContext(ctx).Create(&chunks).Error
+	if len(chunks) == 0 {
+		return nil
+	}
+	modelChunks := make([]*model.Chunk, len(chunks))
+	for i, chunk := range chunks {
+		modelChunks[i] = r.domainToModelChunk(chunk)
+	}
+	return r.db.WithContext(ctx).Create(&modelChunks).Error
 }
 
 // GetChunksByIDs 批量回表查询
 func (r *PGMetadataRepo) GetChunksByIDs(ctx context.Context, ids []string) (map[string]*domain.Chunk, error) {
-	var chunks []*domain.Chunk
-
-	// GORM 批量查询： SELECT * FROM chunks WHERE id IN (?)
-	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&chunks).Error
+	if len(ids) == 0 {
+		return make(map[string]*domain.Chunk), nil
+	}
+	var modelChunks []*model.Chunk
+	err := r.db.WithContext(ctx).
+		Where("id IN ?", ids).
+		Find(&modelChunks).Error
 	if err != nil {
 		return nil, err
 	}
 
 	// 转为 Map 以便 O(1) 复杂度回填
 	chunkMap := make(map[string]*domain.Chunk)
-	for _, c := range chunks {
-		domainChunk := r.modelToDomainChunk(&c)
-		chunkMap[c.ID] = domainChunk
+	for _, mc := range modelChunks {
+		domainChunk := r.modelToDomainChunk(mc)
+		chunkMap[mc.ID] = domainChunk
 	}
 	return chunkMap, nil
 }
@@ -98,7 +114,8 @@ func (r *PGMetadataRepo) domainToModelChunk(chunk *domain.Chunk) *model.Chunk {
 		ID:         chunk.ID,
 		DocumentID: chunk.DocumentID,
 		TenantID:   "default", // TODO: 从上下文获取租户 ID
-		Embedding:  nil,       // 不存 PG，只存 Milvus
+		Content:    chunk.Content,
+		Embedding:  nil, // 不存 PG，只存 Milvus
 		Metadata:   datatypes.JSON(chunk.Metadata),
 	}
 }

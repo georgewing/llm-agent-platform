@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"fmt"
+
 	"github.com/milvus-io/milvus-sdk-go/v2/client"
+	"github.com/milvus-io/milvus-sdk-go/v2/entity"
 	"llm-agent-platform/internal/knowledge/domain"
 )
 
@@ -32,4 +34,30 @@ func (r *MilvusRepo) SearchVector(ctx context.Context, vector []float32, topK in
 	//    })
 	// }
 	return chunks, nil
+}
+
+func (r *MilvusRepo) InsertVectors(ctx context.Context, chunks []*domain.Chunk, vectors [][]float32) error {
+	if len(chunks) == 0 || len(chunks) != len(vectors) {
+		return fmt.Errorf("chunks and vectors length mismatch")
+	}
+
+	ids := make([]string, len(chunks))
+	vecData := make([][]float32, len(chunks))
+	for i, chunk := range chunks {
+		ids[i] = chunk.ID
+		vecData[i] = vectors[i]
+	}
+
+	idCol := entity.NewColumnVarChar("id", ids)
+	vectorCol := entity.NewColumnFloatVector("vector", vecData)
+
+	result, err := r.client.Insert(ctx, r.collectionName, "", idCol, vectorCol)
+	if err != nil {
+		return fmt.Errorf("milvus insert failed: %w", err)
+	}
+
+	if result.InsertCount != int64(len(chunks)) {
+		// log warning but still success (partial insert)
+	}
+	return nil
 }

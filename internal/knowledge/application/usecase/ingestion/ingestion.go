@@ -44,9 +44,10 @@ func (s *SimpleChunker) Chunk(ctx context.Context, doc *domain.Document) ([]*dom
 		}
 		chunkID := fmt.Sprintf("%s_chunk_%d", doc.ID, i)
 		chunks = append(chunks, &domain.Chunk{
-			ID:       chunkID,
-			Content:  text[i:end],
-			Metadata: doc.Metadata,
+			ID:         chunkID,
+			DocumentID: doc.ID,
+			Content:    text[i:end],
+			Metadata:   doc.Metadata,
 		})
 	}
 	return chunks, nil
@@ -97,7 +98,7 @@ func (u *IngestionUsecase) Ingest(ctx context.Context, doc *domain.Document) err
 	wg.Add(3)
 	go func() { defer wg.Done(); vecErr = u.vectorRepo.InsertVectors(ctx, chunks, vectors) }()
 	go func() { defer wg.Done(); kwErr = u.keywordRepo.IndexKeywords(ctx, chunks) }()
-	go func() { defer wg.Done(); metaErr = u.metaRepo.SaveChunks(ctx, chunks) }()
+	go func() { defer wg.Done(); metaErr = u.metaRepo.BatchSaveChunks(ctx, chunks) }()
 	wg.Wait()
 
 	if vecErr != nil || kwErr != nil || metaErr != nil {
