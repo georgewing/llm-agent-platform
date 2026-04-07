@@ -65,7 +65,8 @@ func (r *MilvusRepo) SearchVector(ctx context.Context, vector []float32, topK in
 				// Content 留空，后续通过 GetChunksByIDs 从 PG 回填
 			})
 		}
-	}	return chunks, nil
+	}
+	return chunks, nil
 }
 
 func (r *MilvusRepo) InsertVectors(ctx context.Context, chunks []*domain.Chunk, vectors [][]float32) error {
