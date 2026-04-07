@@ -15,7 +15,7 @@ type EmbeddingService interface {
 
 type VectorRepo interface {
 	SearchVector(ctx context.Context, vector []float32, topK int) ([]*domain.Chunk, error)
-	InsertVectors(ctx context.Context, chunks []domain.Chunk, vector []float32) error
+	InsertVectors(ctx context.Context, chunks []*domain.Chunk, vector [][]float32) error
 }
 
 type KeywordRepo interface {
