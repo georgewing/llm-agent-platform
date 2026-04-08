@@ -14,19 +14,22 @@ type RecursiveCharacterChunker struct {
 	Separators   []string // 支持多层分隔符，优先级从高到低
 }
 
-func NewRecursiveCharacterChunker(chunkSize, chunkOverlap int) *RecursiveCharacterChunker {
-	if chunkSize <= 0 {
-		chunkSize = 512
+func NewRecursiveCharacterChunker(config ChunkConfig) *RecursiveCharacterChunker {
+	if config.ChunkSize <= 0 {
+		config.ChunkSize = 512
 	}
-	if chunkOverlap < 0 || chunkOverlap >= chunkSize {
-		chunkOverlap = chunkSize / 10
+	if config.OverlapSize < 0 || config.OverlapSize >= config.ChunkSize {
+		config.OverlapSize = config.ChunkSize / 10
 	}
+	separators := config.Separators
+	if len(separators) == 0 {
+		separators = []string{"\n\n", "\n", "。", "！", "？", ".", " ", ""}
+	}
+
 	return &RecursiveCharacterChunker{
-		ChunkSize:    chunkSize,
-		ChunkOverlap: chunkOverlap,
-		Separators: []string{
-			"\n\n", "\n", "。", "！", "？", ".", " ", "", // 中英文双兼容
-		},
+		ChunkSize:    config.ChunkSize,
+		ChunkOverlap: config.OverlapSize,
+		Separators:   separators,
 	}
 }
 
@@ -56,7 +59,7 @@ func (c *RecursiveCharacterChunker) Chunk(ctx context.Context, doc *domain.Docum
 
 // 递归拆分核心逻辑（LangChain 经典实现）
 func (c *RecursiveCharacterChunker) recursiveSplit(text string, sepIdx int) []string {
-	if len(text) <= c.ChunkSize {
+	if len([]rune(text)) <= c.ChunkSize {
 		return []string{text}
 	}
 	if sepIdx >= len(c.Separators) {
@@ -73,32 +76,34 @@ func (c *RecursiveCharacterChunker) recursiveSplit(text string, sepIdx int) []st
 
 	var chunks []string
 	var current strings.Builder
+
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
 
-		if current.Len()+len(part) > c.ChunkSize {
-			// 当前 chunk 已满，先保存
+		// 当前 chunk 已满，先保存
+		if current.Len()+len(part)+len(sep) > c.ChunkSize {
 			if current.Len() > 0 {
 				chunks = append(chunks, current.String())
 			}
 			current.Reset()
 		}
 
-		if current.Len() > 0 {
-			current.WriteString(sep)
-		}
-		current.WriteString(part)
-
 		// 加入 overlap（前一个 chunk 尾部内容）
 		if len(chunks) > 0 && c.ChunkOverlap > 0 {
 			last := chunks[len(chunks)-1]
 			if len(last) > c.ChunkOverlap {
-				current.WriteString(sep + last[len(last)-c.ChunkOverlap:])
+				current.WriteString(last[len(last)-c.ChunkOverlap:])
+				current.WriteString(sep)
 			}
 		}
+
+		if current.Len() > 0 {
+			current.WriteString(sep)
+		}
+		current.WriteString(part)
 	}
 	if current.Len() > 0 {
 		chunks = append(chunks, current.String())
@@ -108,10 +113,10 @@ func (c *RecursiveCharacterChunker) recursiveSplit(text string, sepIdx int) []st
 
 func (c *RecursiveCharacterChunker) splitFixed(text string) []string {
 	var chunks []string
-	for i := 0; i < len(text); i += c.ChunkSize - c.ChunkOverlap {
+	for i := 0; i < len([]rune(text)); i += c.ChunkSize - c.ChunkOverlap {
 		end := i + c.ChunkSize
-		if end > len(text) {
-			end = len(text)
+		if end > len([]rune(text)) {
+			end = len([]rune(text))
 		}
 		chunks = append(chunks, text[i:end])
 	}

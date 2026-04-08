@@ -23,6 +23,7 @@ llm-platform/
 │   │   ├── chunking/                 # Chunking 策略实现（已统一）
 │   │   │   ├── chunking.go           # 接口定义
 │   │   │   ├── recursive_character.go
+│   │   │   ├── sliding_window.go
 │   │   │   └── semantic.go          
 │   │   ├── infrastructure/           # 基础设施适配器
 │   │   │   ├── milvus/               

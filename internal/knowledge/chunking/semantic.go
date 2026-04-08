@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 
 	"llm-agent-platform/internal/knowledge/domain"
@@ -16,16 +17,17 @@ type SemanticChunker struct {
 	Threshold    float64 // 余弦相似度阈值，低于此值视为语义断崖（推荐 0.2~0.35）
 }
 
-func NewSemanticChunker(emb repository.EmbeddingService, chunkSize int, threshold float64) *SemanticChunker {
-	if chunkSize <= 0 {
-		chunkSize = 512
+func NewSemanticChunker(emb repository.EmbeddingService, config ChunkConfig) *SemanticChunker {
+	if config.ChunkSize <= 0 {
+		config.ChunkSize = 512
 	}
+	threshold := config.Threshold
 	if threshold <= 0 || threshold >= 1 {
 		threshold = 0.25 // 经验值，平衡 chunk 数量与语义完整性
 	}
 	return &SemanticChunker{
 		embeddingSvc: emb,
-		ChunkSize:    chunkSize,
+		ChunkSize:    config.ChunkSize,
 		Threshold:    threshold,
 	}
 }
@@ -75,12 +77,9 @@ func (c *SemanticChunker) Chunk(ctx context.Context, doc *domain.Document) ([]*d
 // 句子拆分（支持中英文句号、感叹号、问号）
 func (c *SemanticChunker) splitSentences(text string) []string {
 	text = strings.TrimSpace(text)
-	// 统一标点
-	text = strings.ReplaceAll(text, "！", "。")
-	text = strings.ReplaceAll(text, "？", "。")
-	text = strings.ReplaceAll(text, "!", "。")
-	text = strings.ReplaceAll(text, "?", "。")
-	sents := strings.Split(text, "。")
+	// 支持中英文句子结束符
+	re := regexp.MustCompile(`[。！？.!?]\s*`)
+	sents := re.Split(text, -1)
 	var result []string
 	for _, s := range sents {
 		s = strings.TrimSpace(s)

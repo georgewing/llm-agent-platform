@@ -2,8 +2,9 @@ package domain
 
 import (
 	"errors"
-	"github.com/google/uuid"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Document struct {
@@ -13,6 +14,7 @@ type Document struct {
 	Content   string    `json:"content"`
 	Status    string    `json:"status"` // PENDING, PROCESSING, COMPLETED, FAILED
 	CreatedAt time.Time `json:"created_at"`
+	Metadata  map[string]interface{}
 }
 
 // SplitIntoChunks：执行文档分块逻辑

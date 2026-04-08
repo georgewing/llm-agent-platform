@@ -8,27 +8,19 @@ import (
 	"llm-agent-platform/internal/knowledge/domain"
 )
 
-type BoundaryType int
-
-const (
-	BoundarySentence  BoundaryType = iota // 句子边界（。！？.!?）
-	BoundaryParagraph                     // 段落边界（\n\n）
-	BoundaryPhrase                        // 短语边界（，、,;）
-	BoundaryWord                          // 单词边界（空格）
-	BoundaryNone                          // 无边界，强制切割
-)
-
 type SlidingWindowChunker struct {
 	config ChunkConfig
 }
 
 // ChunkConfig 分块配置
 type ChunkConfig struct {
-	ChunkSize       int  `json:"chunk_size"`       // 目标块大小
-	OverlapSize     int  `json:"overlap_size"`     // 重叠大小
-	MinChunkSize    int  `json:"min_chunk_size"`   // 最小块大小
-	MaxChunkSize    int  `json:"max_chunk_size"`   // 最大块大小
-	RespectBoundary bool `json:"respect_boundary"` // 是否尊重语义边界
+	ChunkSize       int      `json:"chunk_size"`     // 目标块大小
+	OverlapSize     int      `json:"overlap_size"`   // 重叠大小
+	MinChunkSize    int      `json:"min_chunk_size"` // 最小块大小
+	MaxChunkSize    int      `json:"max_chunk_size"` // 最大块大小
+	Separators      []string `json:"separators"`     // 分隔符
+	RespectBoundary bool     `json:"respect_boundary"`
+	Threshold       float64  `json:"threshold"`
 }
 
 func NewSlidingWindowChunker(config ChunkConfig) *SlidingWindowChunker {
@@ -52,6 +44,9 @@ func NewSlidingWindowChunker(config ChunkConfig) *SlidingWindowChunker {
 
 // Chunk 对文档进行分块
 func (c *SlidingWindowChunker) Chunk(ctx context.Context, doc *domain.Document) ([]*domain.Chunk, error) {
+	if c.config.RespectBoundary {
+		// TODO: Implement semantic boundary respect
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -97,6 +92,7 @@ func (c *SlidingWindowChunker) Chunk(ctx context.Context, doc *domain.Document) 
 			ID:         chunkID,
 			DocumentID: doc.ID,
 			Content:    content,
+			Metadata:   doc.Metadata,
 		})
 
 		if end == length {
