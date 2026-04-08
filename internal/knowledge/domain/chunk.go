@@ -1,13 +1,15 @@
 package domain
 
-import "time"
+import (
+	"time"
+)
 
 type Chunk struct {
 	ID         string                 `json:"id"`
 	Content    string                 `json:"content"`
 	Metadata   map[string]interface{} `json:"metadata"`
 	Score      float64                `json:"score"`
-	Embedding  []float32              `json:"-"`
+	Embedding  *Embedding             `json:"embedding"`
 	CreatedAt  time.Time              `json:"created_at"`
 	UpdatedAt  time.Time              `json:"updated_at"`
 	DocumentID string                 `json:"document_id"`

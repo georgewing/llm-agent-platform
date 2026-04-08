@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"llm-agent-platform/internal/knowledge/domain"
-	"llm-agent-platform/internal/model"
 
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -46,9 +45,8 @@ func (r *PGMetadataRepo) CreateDocument(ctx context.Context, doc *domain.Documen
 }
 
 func (r *PGMetadataRepo) UpdateDocumentStatus(ctx context.Context, docID string, status string) error {
-	// TODO: 需要在 model.Document 中添加 Status 字段
 	// 或者创建单独的 DocumentStatus 模型
-	return r.db.WithContext(ctx).Model(&model.Document{}).
+	return r.db.WithContext(ctx).Model(&domain.Document{}).
 		Where("id = ?", docID).
 		Update("status", status).Error
 }
@@ -58,7 +56,7 @@ func (r *PGMetadataRepo) BatchSaveChunks(ctx context.Context, chunks []*domain.C
 	if len(chunks) == 0 {
 		return nil
 	}
-	modelChunks := make([]*model.Chunk, len(chunks))
+	modelChunks := make([]*domain.Chunk, len(chunks))
 	for i, chunk := range chunks {
 		modelChunks[i] = r.domainToModelChunk(chunk)
 	}
@@ -70,7 +68,7 @@ func (r *PGMetadataRepo) GetChunksByIDs(ctx context.Context, ids []string) (map[
 	if len(ids) == 0 {
 		return make(map[string]*domain.Chunk), nil
 	}
-	var modelChunks []*model.Chunk
+	var modelChunks []*domain.Chunk
 	err := r.db.WithContext(ctx).
 		Where("id IN ?", ids).
 		Find(&modelChunks).Error
@@ -87,8 +85,8 @@ func (r *PGMetadataRepo) GetChunksByIDs(ctx context.Context, ids []string) (map[
 	return chunkMap, nil
 }
 
-func (r *PGMetadataRepo) domainToModelDocument(doc *domain.Document) *model.Document {
-	return &model.Document{
+func (r *PGMetadataRepo) domainToModelDocument(doc *domain.Document) *domain.Document {
+	return &domain.Document{
 		ID:        doc.ID,
 		TenantID:  "default", // TODO: 从上下文获取租户 ID
 		Name:      doc.Title,
@@ -98,19 +96,19 @@ func (r *PGMetadataRepo) domainToModelDocument(doc *domain.Document) *model.Docu
 	}
 }
 
-func (r *PGMetadataRepo) modelToDomainDocument(doc *model.Document) *domain.Document {
+func (r *PGMetadataRepo) modelToDomainDocument(doc *domain.Document) *domain.Document {
 	return &domain.Document{
 		ID:        doc.ID,
 		Title:     doc.Name,
 		Content:   doc.Content,
 		Metadata:  doc.Metadata,
 		CreatedAt: doc.CreatedAt,
-		UpdatedAt: doc.CreatedAt, // TODO: model 中需要添加 UpdatedAt 字段
+		UpdatedAt: doc.CreatedAt,
 	}
 }
 
-func (r *PGMetadataRepo) domainToModelChunk(chunk *domain.Chunk) *model.Chunk {
-	return &model.Chunk{
+func (r *PGMetadataRepo) domainToModelChunk(chunk *domain.Chunk) *domain.Chunk {
+	return &domain.Chunk{
 		ID:         chunk.ID,
 		DocumentID: chunk.DocumentID,
 		TenantID:   "default", // TODO: 从上下文获取租户 ID
@@ -120,7 +118,7 @@ func (r *PGMetadataRepo) domainToModelChunk(chunk *domain.Chunk) *model.Chunk {
 	}
 }
 
-func (r *PGMetadataRepo) modelToDomainChunk(chunk *model.Chunk) *domain.Chunk {
+func (r *PGMetadataRepo) modelToDomainChunk(chunk *domain.Chunk) *domain.Chunk {
 	return &domain.Chunk{
 		ID:         chunk.ID,
 		DocumentID: chunk.DocumentID,
