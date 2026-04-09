@@ -13,6 +13,7 @@ type Chunk struct {
 	CreatedAt  time.Time              `json:"created_at"`
 	UpdatedAt  time.Time              `json:"updated_at"`
 	DocumentID string                 `json:"document_id"`
+	TenantID   string                 `json:"tenant_id"`
 }
 
 // NewChunk 工厂方法

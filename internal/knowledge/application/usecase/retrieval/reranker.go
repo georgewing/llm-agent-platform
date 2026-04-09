@@ -14,7 +14,7 @@ type Reranker interface {
 
 // CrossEncoderReranker 调用外部 CrossEncoder 模型 API (如 BGE-Reranker, Cohere Rerank)
 type CrossEncoderReranker struct {
-	apiClient RerankAPIClient // 假设在 internal/embedding 封装了相关HTTP客户端
+	service domain.RerankService // 依赖接口
 }
 
 // Rerank 实现
@@ -24,14 +24,13 @@ func (r *CrossEncoderReranker) Rerank(ctx context.Context, query string, chunks 
 	}
 
 	// 提取文本列表发给 Rerank 模型
-	var texts []string
-	for _, c := range chunks {
-		texts = append(texts, c.Content)
+	texts := make([]string, len(chunks))
+	for i, c := range chunks {
+		texts[i] = c.Content
 	}
 
 	// 调用远端 CrossEncoder 进行重新打分
-	// 期望返回的 scores 顺序与 texts 顺序一致，取值一般是不限范围的 Logit 或 0~1 的 sigmoid 值
-	scores, err := r.apiClient.CrossEncoderScore(ctx, query, texts)
+	scores, err := r.service.Rerank(ctx, query, texts, topK)
 	if err != nil {
 		return nil, err
 	}

@@ -16,9 +16,12 @@ llm-platform/
 │   │   ├── domain/                   # 领域层（纯业务实体 + 不变式）
 │   │   │   ├── chunk.go              
 │   │   │   ├── document.go           
-│   │   │   └── embedding.go          
+│   │   │   ├── embedding.go
+│   │   │   └── repository.go         # 仓储接口        
 │   │   ├── application/              # 用例层（协调领域）
 │   │   │   ├── usecase/              # IngestUseCase、RetrieveUseCase、SearchUseCase
+│   │   │       ├── ingestion/
+│   │   │       └── retrieval/
 │   │   │   └── dto/                  # 输入输出DTO（防止领域泄漏）
 │   │   ├── chunking/                 # Chunking 策略实现（已统一）
 │   │   │   ├── chunking.go           # 接口定义

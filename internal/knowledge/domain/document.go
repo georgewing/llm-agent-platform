@@ -14,7 +14,9 @@ type Document struct {
 	Content   string    `json:"content"`
 	Status    string    `json:"status"` // PENDING, PROCESSING, COMPLETED, FAILED
 	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	Metadata  map[string]interface{}
+	TenantID  string `json:"tenant_id"`
 }
 
 // SplitIntoChunks：执行文档分块逻辑

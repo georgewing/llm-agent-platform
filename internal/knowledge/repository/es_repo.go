@@ -5,8 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/elastic/go-elasticsearch/v8"
 	"llm-agent-platform/internal/knowledge/domain"
+
+	"github.com/elastic/go-elasticsearch/v8"
 )
 
 type ESRepo struct {
@@ -33,6 +34,11 @@ func (r *ESRepo) SearchKeyword(ctx context.Context, query string, topK int) ([]*
 		"size": topK,
 		// 可选：加 min_score 过滤低质量结果
 		// "min_score": 0.5,
+	}
+
+	bodyBytes, err := json.Marshal(queryBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal query body failed: %w", err)
 	}
 
 	// 2. 发送请求到 ES
