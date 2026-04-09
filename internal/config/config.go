@@ -33,19 +33,24 @@ type ServerConfig struct {
 
 // LogConfig 日志配置
 type LogConfig struct {
-	Level  string `mapstructure:"level"`  // debug, info, warn, error
-	Format string `mapstructure:"format"` // json, text
-	Output string `mapstructure:"output"` // console, file
+	Level    string `mapstructure:"level"`  // debug, info, warn, error
+	Format   string `mapstructure:"format"` // json, text
+	Output   string `mapstructure:"output"` // console, file
+	FilePath string `mapstructure:"file_path"`
 }
 
 // DatabaseConfig PostgreSQL配置
 type DatabaseConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	DBName   string `mapstructure:"dbname"`
-	SSLMode  string `mapstructure:"sslmode"`
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	User            string        `mapstructure:"user"`
+	Password        string        `mapstructure:"password"`
+	DBName          string        `mapstructure:"dbname"`
+	SSLMode         string        `mapstructure:"sslmode"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+	ConnMaxIdleTime time.Duration `mapstructure:"conn_max_idle_time"`
 }
 
 // RedisConfig Redis缓存配置
@@ -58,25 +63,26 @@ type RedisConfig struct {
 
 // MilvusConfig Milvus向量数据库配置
 type MilvusConfig struct {
-	Host           string `mapstructure:"host"`
-	Port           int    `mapstructure:"port"`
-	Username       string `mapstructure:"username"`
-	Password       string `mapstructure:"password"`
-	DBName         string `mapstructure:"dbname"`
-	CollectionName string `mapstructure:"collection_name"`
-	VectorDim      int    `mapstructure:"vector_dim"`
-	MetricType     string `mapstructure:"metric_type"`
-	IndexType      string `mapstructure:"index_type"`
+	Host           string        `mapstructure:"host"`
+	Port           int           `mapstructure:"port"`
+	Username       string        `mapstructure:"username"`
+	Password       string        `mapstructure:"password"`
+	DBName         string        `mapstructure:"dbname"`
+	CollectionName string        `mapstructure:"collection_name"`
+	VectorDim      int           `mapstructure:"vector_dim"`
+	MetricType     string        `mapstructure:"metric_type"`
+	IndexType      string        `mapstructure:"index_type"`
+	DialTimeout    time.Duration `mapstructure:"dial_timeout"`
 }
 
 // ESConfig Elasticsearch配置
 type ESConfig struct {
-	Addresses []string `mapstructure:"addresses"`
-	Username  string   `mapstructure:"username"`
-	Password  string   `mapstructure:"password"`
-	APIKey    string   `mapstructure:"api_key"`
-	IndexName string   `mapstructure:"index_name"`
-	Timeout   int      `mapstructure:"timeout"`
+	Addresses []string      `mapstructure:"addresses"`
+	Username  string        `mapstructure:"username"`
+	Password  string        `mapstructure:"password"`
+	APIKey    string        `mapstructure:"api_key"`
+	IndexName string        `mapstructure:"index_name"`
+	Timeout   time.Duration `mapstructure:"timeout"`
 }
 
 // EmbeddingConfig Embedding服务配置
@@ -108,11 +114,12 @@ type LLMConfig struct {
 
 // AgentConfig 智能体配置
 type AgentConfig struct {
-	APIKey     string `mapstructure:"api_key"`
-	BaseURL    string `mapstructure:"base_url"`
-	Model      string `mapstructure:"model"`
-	Timeout    int    `mapstructure:"timeout"`
-	MaxRetries int    `mapstructure:"max_retries"`
+	APIKey        string `mapstructure:"api_key"`
+	BaseURL       string `mapstructure:"base_url"`
+	Model         string `mapstructure:"model"`
+	Timeout       int    `mapstructure:"timeout"`
+	MaxRetries    int    `mapstructure:"max_retries"`
+	MaxIterations int    `mapstructure:"max_iterations"`
 }
 
 // GatewayConfig LLM代理网关配置

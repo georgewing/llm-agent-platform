@@ -83,7 +83,8 @@ func (r *MilvusRepo) InsertVectors(ctx context.Context, chunks []*domain.Chunk, 
 	}
 
 	idCol := entity.NewColumnVarChar("id", ids)
-	vectorCol := entity.NewColumnFloatVector("vector", vecData)
+	dim := len(vecData[0])
+	vectorCol := entity.NewColumnFloatVector("vector", dim, vecData)
 
 	result, err := r.client.Insert(ctx, r.collectionName, "", idCol, vectorCol)
 	if err != nil {

@@ -17,7 +17,9 @@ import (
 	"go.uber.org/zap/zapcore"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormlogger "gorm.io/gorm/logger"
+
+	applogger "llm-agent-platform/internal/shared/logger"
 
 	"llm-agent-platform/internal/config"
 	"llm-agent-platform/internal/knowledge/application/usecase/ingestion"
@@ -35,6 +37,8 @@ type application struct {
 	milvusClient client.Client
 	esClient     *elasticsearch.Client
 	httpServer   *http.Server
+	ingestionUC  *ingestion.IngestionUsecase
+	retrievalUC  *retrieval.HybridRetriever
 }
 
 func main() {
@@ -206,19 +210,14 @@ func newLogger(cfg config.LogConfig) (*zap.Logger, error) {
 	return zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel)), nil
 }
 
-func newDatabase(cfg config.DatabaseConfig, logger *zap.Logger) (*gorm.DB, error) {
-	gormLogger := logger.Sugar()
+func newDatabase(cfg config.DatabaseConfig, zapLogger *zap.Logger) (*gorm.DB, error) {
+	gormLogger := applogger.NewGormZapLogger(zapLogger,
+		applogger.WithSlowThreshold(time.Second),
+		applogger.WithGormLogLevel(gormlogger.Warn),
+	)
 
 	db, err := gorm.Open(postgres.Open(buildDSN(cfg)), &gorm.Config{
-		Logger: logger.New(
-			log.New(os.Stdout, "\r\n", log.LstdFlags),
-			logger.Config{
-				SlowThreshold:             time.Second,
-				LogLevel:                  logger.Silent,
-				IgnoreRecordNotFoundError: true,
-				Colorful:                  false,
-			},
-		),
+		Logger: gormLogger,
 	})
 	if err != nil {
 		return nil, err
@@ -241,6 +240,12 @@ func newDatabase(cfg config.DatabaseConfig, logger *zap.Logger) (*gorm.DB, error
 	if err := sqlDB.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("数据库连接验证失败: %w", err)
 	}
+
+	zapLogger.Info("数据库连接成功",
+		zap.String("host", cfg.Host),
+		zap.Int("port", cfg.Port),
+		zap.String("db", cfg.DBName),
+	)
 
 	return db, nil
 }
@@ -374,35 +379,12 @@ func newUseCases(
 		keywordRepo,
 		metaRepo,
 		reranker,
-		cfg.Agent.MaxIterations, // 复用配置或单独定义权重
-		0.3,                     // beta: 关键词权重
+		float64(cfg.Agent.MaxIterations), // 复用配置或单独定义权重
+		0.3,                              // beta: 关键词权重
 		logger,
 	)
 
 	return ingestionUC, retrievalUC, nil
-}
-
-func newHTTPServer(
-	cfg *config.Config,
-	logger *zap.Logger,
-	ingestionUC *ingestion.IngestionUsecase,
-	retrievalUC *retrieval.HybridRetriever,
-) *http.Server {
-	// 设置Gin模式
-	if cfg.Log.Level == "production" {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
-	// 创建路由
-	router := setupRouter(cfg, logger, ingestionUC, retrievalUC)
-
-	return &http.Server{
-		Addr:         ":" + cfg.Server.Port,
-		Handler:      router,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
-	}
 }
 
 func newHTTPServer(
@@ -544,4 +526,27 @@ func handleRetrieve(uc *retrieval.HybridRetriever, logger *zap.Logger) gin.Handl
 			"chunks": []interface{}{}, // 实际结果
 		})
 	}
+}
+
+func setupRouter(
+	cfg *config.Config,
+	logger *zap.Logger,
+	ingestionUC *ingestion.IngestionUsecase,
+	retrievalUC *retrieval.HybridRetriever,
+) *gin.Engine {
+	r := gin.New()
+	r.Use(requestLogger(logger), corsMiddleware(), errorHandler(logger))
+
+	// 健康检查
+	r.GET("/health", healthHandler)
+	r.GET("/ready", readyHandler(cfg))
+
+	// 业务路由
+	api := r.Group("/api/v1")
+	{
+		api.POST("/documents", handleIngest(ingestionUC, logger))
+		api.POST("/retrieve", handleRetrieve(retrievalUC, logger))
+	}
+
+	return r
 }

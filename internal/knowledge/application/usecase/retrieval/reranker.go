@@ -17,6 +17,10 @@ type CrossEncoderReranker struct {
 	service domain.RerankService // 依赖接口
 }
 
+func NewCrossEncoderReranker(service domain.RerankService) *CrossEncoderReranker {
+	return &CrossEncoderReranker{service: service}
+}
+
 // Rerank 实现
 func (r *CrossEncoderReranker) Rerank(ctx context.Context, query string, chunks []*domain.Chunk, topK int) ([]*domain.Chunk, error) {
 	if len(chunks) == 0 {
