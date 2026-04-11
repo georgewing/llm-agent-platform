@@ -550,7 +550,10 @@ func handleIngest(uc *ingestion.IngestionUsecase, metaRepo repository.MetadataRe
 }
 
 func handleRetrieve(uc *retrieval.HybridRetriever, embedClient repository.EmbeddingService, logger *zap.Logger) gin.HandlerFunc {
-
+	const (
+		maxTopK     = 100 // 限制单次检索上限，防止扫库拖死数据库和 Rerank 模型
+		defaultTopK = 10
+	)
 	return func(c *gin.Context) {
 		var req struct {
 			Query string `json:"query" binding:"required"`
@@ -570,7 +573,9 @@ func handleRetrieve(uc *retrieval.HybridRetriever, embedClient repository.Embedd
 		}
 
 		if req.TopK <= 0 {
-			req.TopK = 10
+			req.TopK = defaultTopK
+		} else if req.TopK > maxTopK {
+			req.TopK = maxTopK
 		}
 
 		// 防雪崩上下文管理
