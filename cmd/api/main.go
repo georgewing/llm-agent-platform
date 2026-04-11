@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"llm-agent-platform/internal/knowledge/domain"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,7 +29,8 @@ import (
 	"llm-agent-platform/internal/knowledge/application/usecase/ingestion"
 	"llm-agent-platform/internal/knowledge/application/usecase/retrieval"
 	"llm-agent-platform/internal/knowledge/chunking"
-	"llm-agent-platform/internal/knowledge/infrastructure/embedding"
+	"llm-agent-platform/internal/knowledge/embedding"
+	infra_embed "llm-agent-platform/internal/knowledge/infrastructure/embedding"
 	"llm-agent-platform/internal/knowledge/repository"
 	"llm-agent-platform/pkg/milvus"
 )
@@ -90,14 +93,14 @@ func newApplication() (*application, error) {
 	}
 
 	// 5. 组装UseCase
-	ingestionUC, retrievalUC, err := newUseCases(cfg, db, milvusClient, esClient, logger)
+	ingestionUC, retrievalUC, metaRepo, embedClient, err := newUseCases(cfg, db, milvusClient, esClient, logger)
 	if err != nil {
 		return nil, fmt.Errorf("UseCase组装失败: %w", err)
 	}
 	logger.Info("UseCase组装完成")
 
 	// 6. 创建HTTP服务器
-	httpServer := newHTTPServer(cfg, logger, ingestionUC, retrievalUC)
+	httpServer := newHTTPServer(cfg, logger, ingestionUC, retrievalUC, metaRepo, embedClient)
 
 	return &application{
 		cfg:          cfg,
@@ -344,12 +347,12 @@ func newUseCases(
 	milvusClient client.Client,
 	esClient *elasticsearch.Client,
 	logger *zap.Logger,
-) (*ingestion.IngestionUsecase, *retrieval.HybridRetriever, error) {
+) (*ingestion.IngestionUsecase, *retrieval.HybridRetriever, repository.MetadataRepo, repository.EmbeddingService, error) {
 	// Embedding客户端
 	embedClient := embedding.NewEmbeddingClient()
 
 	// Rerank客户端
-	rerankClient := embedding.NewRerankClient()
+	rerankClient := infra_embed.NewRerankClient()
 
 	// 分块器
 	chunker := chunking.NewRecursiveCharacterChunker(chunking.ChunkConfig{
@@ -386,7 +389,7 @@ func newUseCases(
 		logger,
 	)
 
-	return ingestionUC, retrievalUC, nil
+	return ingestionUC, retrievalUC, metaRepo, embedClient, nil
 }
 
 func newHTTPServer(
@@ -394,6 +397,8 @@ func newHTTPServer(
 	logger *zap.Logger,
 	ingestionUC *ingestion.IngestionUsecase,
 	retrievalUC *retrieval.HybridRetriever,
+	metaRepo repository.MetadataRepo,
+	embedClient repository.EmbeddingService,
 ) *http.Server {
 	// 设置Gin模式
 	if cfg.Log.Level == "production" {
@@ -401,7 +406,7 @@ func newHTTPServer(
 	}
 
 	// 创建路由
-	router := setupRouter(cfg, logger, ingestionUC, retrievalUC, metaRepo)
+	router := setupRouter(cfg, logger, ingestionUC, retrievalUC, metaRepo, embedClient)
 
 	return &http.Server{
 		Addr:         ":" + cfg.Server.Port,
@@ -544,7 +549,8 @@ func handleIngest(uc *ingestion.IngestionUsecase, metaRepo repository.MetadataRe
 	}
 }
 
-func handleRetrieve(uc *retrieval.HybridRetriever, logger *zap.Logger) gin.HandlerFunc {
+func handleRetrieve(uc *retrieval.HybridRetriever, embedClient repository.EmbeddingService, logger *zap.Logger) gin.HandlerFunc {
+
 	return func(c *gin.Context) {
 		var req struct {
 			Query string `json:"query" binding:"required"`
@@ -552,20 +558,75 @@ func handleRetrieve(uc *retrieval.HybridRetriever, logger *zap.Logger) gin.Handl
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
+			logger.Warn("解析 Retrieve 请求失败", zap.Error(err), zap.String("client_ip", c.ClientIP()))
 			c.JSON(400, gin.H{"error": "invalid_request", "message": err.Error()})
 			return
 		}
 
-		if req.TopK == 0 {
+		req.Query = strings.TrimSpace(req.Query)
+		if len(req.Query) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "message": "查询字符串不能为空"})
+			return
+		}
+
+		if req.TopK <= 0 {
 			req.TopK = 10
 		}
 
-		// TODO: 调用uc.Retrieve()，需要先获取queryVector
-		logger.Info("检索请求", zap.String("query", req.Query), zap.Int("top_k", req.TopK))
+		// 防雪崩上下文管理
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+		defer cancel()
+		logger.Info("开始检索", zap.String("query", req.Query), zap.Int("top_k", req.TopK))
+
+		// 获取查询向量
+		vectors, err := embedClient.EmbedBatch(ctx, []string{req.Query})
+		if err != nil {
+			logger.Error("Query 向量化调用失败", zap.Error(err))
+			// 底层组件挂了，返回 502 Bad Gateway，掩盖真实 Error，不透传给 C 端
+			c.JSON(http.StatusBadGateway, gin.H{"error": "dependency_failed", "message": "AI 向量化服务暂时响应失败，请稍后重试"})
+			return
+		}
+
+		// 防范向量化结果为空
+		if len(vectors) == 0 || len(vectors[0]) == 0 {
+			logger.Error("Query 向量化返回异常空片", zap.Any("vectors_len", len(vectors)))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "data_error", "message": "无法正确提取查询意图向量"})
+			return
+		}
+		queryVector := vectors[0]
+
+		// 发起综合检索请求
+		chunks, err := uc.Retrieve(ctx, req.Query, queryVector, req.TopK)
+		if err != nil {
+			// 精细化定界：区分到底是依赖超时还是程序 BUG
+			if errors.Is(err, context.DeadlineExceeded) {
+				logger.Warn("综合检索超时被熔断", zap.Error(err))
+				c.JSON(http.StatusGatewayTimeout, gin.H{"error": "timeout", "message": "检索响应超时，请缩小查询范围"})
+				return
+			}
+			logger.Error("综合检索内部错误", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "message": "检索服务遇到异常"})
+			return
+		}
+
+		results := make([]map[string]interface{}, 0, len(chunks))
+		for _, chunk := range chunks {
+			// 洗掉脏数据（比如数据库因异常写入被置空的内容块）
+			if chunk.Content == "" {
+				continue
+			}
+			results = append(results, map[string]interface{}{
+				"id":       chunk.ID,
+				"content":  chunk.Content,
+				"score":    chunk.Score,
+				"metadata": chunk.Metadata,
+			})
+		}
+		logger.Info("检索完成", zap.Int("hits", len(results)))
 
 		c.JSON(200, gin.H{
 			"query":  req.Query,
-			"chunks": []interface{}{}, // 实际结果
+			"chunks": results,
 		})
 	}
 }
@@ -576,6 +637,7 @@ func setupRouter(
 	ingestionUC *ingestion.IngestionUsecase,
 	retrievalUC *retrieval.HybridRetriever,
 	metaRepo repository.MetadataRepo,
+	embedClient repository.EmbeddingService,
 ) *gin.Engine {
 	r := gin.New()
 	r.Use(requestLogger(logger), corsMiddleware(), errorHandler(logger))
@@ -588,7 +650,7 @@ func setupRouter(
 	api := r.Group("/api/v1")
 	{
 		api.POST("/documents", handleIngest(ingestionUC, metaRepo, logger))
-		api.POST("/retrieve", handleRetrieve(retrievalUC, logger))
+		api.POST("/retrieve", handleRetrieve(retrievalUC, embedClient, logger))
 	}
 
 	return r
