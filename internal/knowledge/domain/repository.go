@@ -11,3 +11,8 @@ type RerankService interface {
 type EmbeddingService interface {
 	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
 }
+
+// VectorCalculator 领域层定义的向量计算接口
+type VectorCalculator interface {
+	CosineSimilarity(v1, v2 []float32) (float32, error)
+}

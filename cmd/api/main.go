@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"llm-agent-platform/internal/knowledge/domain"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v8"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/milvus-io/milvus-sdk-go/v2/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -399,7 +401,7 @@ func newHTTPServer(
 	}
 
 	// 创建路由
-	router := setupRouter(cfg, logger, ingestionUC, retrievalUC)
+	router := setupRouter(cfg, logger, ingestionUC, retrievalUC, metaRepo)
 
 	return &http.Server{
 		Addr:         ":" + cfg.Server.Port,
@@ -479,7 +481,7 @@ func readyHandler(cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-func handleIngest(uc *ingestion.IngestionUsecase, logger *zap.Logger) gin.HandlerFunc {
+func handleIngest(uc *ingestion.IngestionUsecase, metaRepo repository.MetadataRepo, logger *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
 			Title   string                 `json:"title" binding:"required"`
@@ -492,12 +494,52 @@ func handleIngest(uc *ingestion.IngestionUsecase, logger *zap.Logger) gin.Handle
 			return
 		}
 
-		// TODO: 构造domain.Document并调用uc.Ingest()
-		logger.Info("文档上传请求", zap.String("title", req.Title))
+		ctx := c.Request.Context()
+		docID := uuid.New().String()
 
-		c.JSON(202, gin.H{
-			"status": "processing",
-			"doc_id": "uuid-will-be-generated",
+		doc := &domain.Document{
+			ID:        docID,
+			Title:     req.Title,
+			Content:   req.Content,
+			Metadata:  req.Meta,
+			Status:    "PROCESSING",
+			CreatedAt: time.Now(),
+		}
+
+		if err := metaRepo.CreateDocument(ctx, doc); err != nil {
+			logger.Error("Failed to create document", zap.Error(err), zap.String("doc_id", docID))
+			c.JSON(500, gin.H{"error": "failed_to_create_document", "message": err.Error()})
+			return
+		}
+
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("panic recovered", zap.String("doc_id", docID), zap.Any("panic", r))
+					// 尝试防止文档永远处于PROCESSING状态无法重试
+					_ = metaRepo.UpdateDocumentStatus(context.Background(), docID, "FAILED")
+				}
+			}()
+
+			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+
+			_ = metaRepo.UpdateDocumentStatus(bgCtx, docID, "PROCESSING")
+
+			err := uc.Ingest(bgCtx, doc)
+			if err != nil {
+				_ = metaRepo.UpdateDocumentStatus(bgCtx, docID, "FAILED")
+				logger.Error("Ingestion failed", zap.Error(err))
+				return
+			}
+
+			_ = metaRepo.UpdateDocumentStatus(bgCtx, docID, "COMPLETED")
+
+		}()
+
+		c.JSON(http.StatusAccepted, gin.H{
+			"status": "PENDING",
+			"doc_id": docID,
 		})
 	}
 }
@@ -533,6 +575,7 @@ func setupRouter(
 	logger *zap.Logger,
 	ingestionUC *ingestion.IngestionUsecase,
 	retrievalUC *retrieval.HybridRetriever,
+	metaRepo repository.MetadataRepo,
 ) *gin.Engine {
 	r := gin.New()
 	r.Use(requestLogger(logger), corsMiddleware(), errorHandler(logger))
@@ -544,7 +587,7 @@ func setupRouter(
 	// 业务路由
 	api := r.Group("/api/v1")
 	{
-		api.POST("/documents", handleIngest(ingestionUC, logger))
+		api.POST("/documents", handleIngest(ingestionUC, metaRepo, logger))
 		api.POST("/retrieve", handleRetrieve(retrievalUC, logger))
 	}
 

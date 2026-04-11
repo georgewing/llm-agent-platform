@@ -66,13 +66,17 @@ func (e *Embedding) Equals(other *Embedding) bool {
 }
 
 // Similarity：计算与另一个 Embedding 的余弦相似度
-func (e *Embedding) Similarity(other *Embedding) (float32, error) {
+func (e *Embedding) Similarity(other *Embedding, calc VectorCalculator) (float32, error) {
 	if e.Dimension != other.Dimension {
 		return 0, errors.New("维度不一致，无法计算相似度")
 	}
-	// 实际项目中可注入向量计算器，或使用第三方库
-	// 这里保留接口，具体实现在 infrastructure 层
-	return 0, nil // TODO: 后续实现
+
+	if calc == nil {
+		return 0, errors.New("缺少向量计算器实现")
+	}
+
+	// 注入向量计算器
+	return calc.CosineSimilarity(e.Vector, other.Vector)
 }
 
 // String 便于日志打印
