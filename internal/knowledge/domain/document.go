@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 )
 
 type Document struct {
@@ -15,7 +16,7 @@ type Document struct {
 	Status    string    `json:"status"` // PENDING, PROCESSING, COMPLETED, FAILED
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	Metadata  map[string]interface{}
+	Metadata  datatypes.JSON
 	TenantID  string `json:"tenant_id"`
 }
 

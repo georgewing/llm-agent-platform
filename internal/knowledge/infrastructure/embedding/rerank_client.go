@@ -44,6 +44,13 @@ type RerankResponse struct {
 	} `json:"usage"`
 }
 
+func getEnvWithDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 func NewRerankClient() *RerankClient {
 	baseURL := os.Getenv("RERANK_BASE_URL")
 	if baseURL == "" {

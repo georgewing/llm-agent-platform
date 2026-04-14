@@ -1,0 +1,89 @@
+server:
+  port: "8080"
+  read_timeout: "5s"
+  write_timeout: "10s"
+  idle_timeout: "5s"
+  max_header_bytes: 1048576
+  shutdown_timeout: "5s"
+
+log:
+  level: "info"
+  format: "json"
+  output: "console"
+  file_path: ""
+
+database:
+  host: "127.0.0.1"
+  port: 5432
+  user: "postgres"
+  password: "your_pg_password"
+  dbname: "llm_agent"
+  sslmode: "disable"
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: "1h"
+  conn_max_idle_time: "30m"
+
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  password: ""
+  db: 0
+
+milvus:
+  host: "127.0.0.1"
+  port: 19530
+  username: ""
+  password: ""
+  dbname: "default"
+  collection_name: "knowledge_base"
+  vector_dim: 1536
+  metric_type: "L2"
+  index_type: "HNSW"
+  dial_timeout: "5s"
+
+es:
+  addresses:
+    - "http://127.0.0.1:9200"
+  username: "elastic"
+  password: "your_es_password"
+  index_name: "knowledge_base"
+  timeout: "5s"
+
+embedding:
+  api_key: "sk-your-embedding-key"
+  base_url: "https://api.openai.com/v1"
+  model: "text-embedding-3-small"
+  timeout: 30
+  max_retries: 3
+
+rerank:
+  api_key: "your-cohere-key"
+  base_url: "https://api.cohere.ai/v1"
+  model: "rerank-multilingual-v2.0"
+  timeout: 30
+  max_retries: 3
+
+llm:
+  api_key: "sk-your-llm-key"
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4-turbo"
+  timeout: 60
+  max_retries: 3
+
+agent:
+  api_key: "sk-your-agent-llm-key"
+  base_url: "https://api.openai.com/v1"
+  model: "gpt-4-turbo"
+  timeout: 60
+  max_retries: 3
+  max_iterations: 10
+
+gateway:
+  enable_auth: false
+  enable_rate_limit: false
+  enable_cache: false
+  cache_ttl: "1h"
+
+workflow:
+  max_workers: 10

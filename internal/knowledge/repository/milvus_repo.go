@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"llm-agent-platform/internal/knowledge/domain"
+
 	"github.com/milvus-io/milvus-sdk-go/v2/client"
 	"github.com/milvus-io/milvus-sdk-go/v2/entity"
-	"llm-agent-platform/internal/knowledge/domain"
 )
 
 type MilvusRepo struct {
@@ -29,7 +30,6 @@ func (r *MilvusRepo) SearchVector(ctx context.Context, vector []float32, topK in
 	if err != nil {
 		return nil, fmt.Errorf("new search param failed: %w", err)
 	}
-	searchParam.WithMetricType(entity.COSINE) // 推荐：余弦相似度（Embedding 通常已归一化）
 	// 2. 执行向量搜索（单向量查询）
 	searchResults, err := r.client.Search(
 		ctx,
@@ -51,12 +51,15 @@ func (r *MilvusRepo) SearchVector(ctx context.Context, vector []float32, topK in
 	// 注意：Milvus 召回通常只返回 ChunkID 和 Score
 	var chunks []*domain.Chunk
 	for _, result := range searchResults {
+		// 解析 IDs 列
+		idCol, ok := result.IDs.(*entity.ColumnVarChar)
+		if !ok {
+			continue
+		}
+		ids := idCol.Data()
 		// result.IDs 和 result.Scores 长度一致
-		for i := range result.IDs {
-			chunkID, ok := result.IDs[i].(string)
-			if !ok {
-				continue // 类型不匹配，跳过
-			}
+		for i := range ids {
+			chunkID := ids[i]
 			score := result.Scores[i]
 
 			chunks = append(chunks, &domain.Chunk{
@@ -91,7 +94,7 @@ func (r *MilvusRepo) InsertVectors(ctx context.Context, chunks []*domain.Chunk, 
 		return fmt.Errorf("milvus insert failed: %w", err)
 	}
 
-	if result.InsertCount != int64(len(chunks)) {
+	if result.Len() != len(chunks) {
 		// log warning but still success (partial insert)
 	}
 	return nil

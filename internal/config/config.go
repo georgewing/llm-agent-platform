@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/spf13/viper"
@@ -139,6 +140,19 @@ type WorkflowConfig struct {
 func Load() *Config {
 	setDefaults()
 	bindEnv()
+
+	viper.SetConfigName("config")    // 配置文件名称(无扩展名)
+	viper.SetConfigType("yaml")      // 如果配置文件的名称中没有扩展名，则需要配置此项
+	viper.AddConfigPath(".")         // 查找配置文件所在的路径：项目根目录
+	viper.AddConfigPath("./configs") // 也可以查找 configs 目录
+
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			// 配置文件找到了，但是在这个过程中发生了其他错误（如 YAML 语法错误）
+			panic(fmt.Errorf("读取配置文件发生未预期错误: %w", err))
+		}
+		// 如果只是找不到 config.yaml 文件是允许的，会直接降级使用默认值或环境变量
+	}
 
 	var config Config
 	if err := viper.Unmarshal(&config); err != nil {

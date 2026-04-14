@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"llm-agent-platform/internal/knowledge/domain"
@@ -176,7 +177,6 @@ func newLogger(cfg config.LogConfig) (*zap.Logger, error) {
 		LevelKey:       "level",
 		NameKey:        "logger",
 		CallerKey:      "caller",
-		FunctionKey:    zapcore.OmitKey,
 		MessageKey:     "msg",
 		StacktraceKey:  "stacktrace",
 		LineEnding:     zapcore.DefaultLineEnding,
@@ -186,9 +186,16 @@ func newLogger(cfg config.LogConfig) (*zap.Logger, error) {
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
-	level, err := zapcore.ParseLevel(cfg.Level)
-	if err != nil {
+	level := zapcore.InfoLevel
+	switch cfg.Level {
+	case "debug":
+		level = zapcore.DebugLevel
+	case "info":
 		level = zapcore.InfoLevel
+	case "warn":
+		level = zapcore.WarnLevel
+	case "error":
+		level = zapcore.ErrorLevel
 	}
 
 	var core zapcore.Core
@@ -252,6 +259,12 @@ func newDatabase(cfg config.DatabaseConfig, zapLogger *zap.Logger) (*gorm.DB, er
 		zap.String("db", cfg.DBName),
 	)
 
+	// 引用 domain 下的模型结构进行自动建表或字段更新
+	if err := db.AutoMigrate(&domain.Document{}); err != nil {
+		return nil, fmt.Errorf("数据库表自动迁移失败: %w", err)
+	}
+	zapLogger.Info("数据库表结构同步完成")
+
 	return db, nil
 }
 
@@ -277,7 +290,7 @@ func newMilvusClient(cfg config.MilvusConfig, logger *zap.Logger) (client.Client
 	// 验证连接
 	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := c.Ping(ctx); err != nil {
+	if _, err := c.CheckHealth(ctx); err != nil {
 		return nil, fmt.Errorf("Milvus连接验证失败: %w", err)
 	}
 
@@ -502,11 +515,12 @@ func handleIngest(uc *ingestion.IngestionUsecase, metaRepo repository.MetadataRe
 		ctx := c.Request.Context()
 		docID := uuid.New().String()
 
+		metaJSON, _ := json.Marshal(req.Meta)
 		doc := &domain.Document{
 			ID:        docID,
 			Title:     req.Title,
 			Content:   req.Content,
-			Metadata:  req.Meta,
+			Metadata:  metaJSON,
 			Status:    "PROCESSING",
 			CreatedAt: time.Now(),
 		}

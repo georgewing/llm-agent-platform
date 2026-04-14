@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: llm-pg
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=your_pg_password
+      - POSTGRES_DB=llm_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. Redis
+  redis:
+    image: redis:8-alpine
+    container_name: llm-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # 3. Elasticsearch (本地单节点，关闭安全校验以便快速测试)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.1
+    container_name: llm-es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  # 4. Milvus 依赖 - Etcd
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: llm-etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes:
+      - etcd_data:/etcd
+
+  # 5. Milvus 依赖 - Minio
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    container_name: llm-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    command: minio server /minio_data
+    volumes:
+      - minio_data:/minio_data
+
+  # 6. Milvus Standalone 本身
+  milvus:
+    image: milvusdb/milvus:v2.3.5
+    container_name: llm-milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    depends_on:
+      - etcd
+      - minio
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+
+volumes:
+  postgres_data:
+  redis_data:
+  es_data:
+  etcd_data:
+  minio_data:
+  milvus_data:
